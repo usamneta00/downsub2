@@ -47,9 +47,15 @@ def get_subtitles(video_id, proxies):
 
     # try static list methods
     transcripts = _call_list(YouTubeTranscriptApi)
-    # fallback to instance-based API
+    # fallback to instance-based API, applying proxy_config if needed
     if transcripts is None:
-        api = YouTubeTranscriptApi()
+        try:
+            from youtube_transcript_api.proxies import ProxyConfig
+
+            proxy_cfg = ProxyConfig.from_requests_dict(proxies) if proxies else None
+            api = YouTubeTranscriptApi(proxy_config=proxy_cfg)
+        except Exception:
+            api = YouTubeTranscriptApi()
         transcripts = _call_list(api)
     if transcripts is None:
         raise RuntimeError('Could not list transcripts for video ' + video_id)
