@@ -1,3 +1,7 @@
+### Ignore environment files
+.env
+.env.*
+env/
 venv/
 __pycache__/
 *.pyc

@@ -1,3 +1,6 @@
+youtube-transcript-api
+openai
+python-dotenv
 django
 openai
 youtube-transcript-api
