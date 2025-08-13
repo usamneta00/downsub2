@@ -1,6 +1,6 @@
 import os
 import sys
-from youtube_transcript_api import YouTubeTranscriptApi, NoTranscriptFound
+from youtube_transcript_api import YouTubeTranscriptApi, NoTranscriptFound, TranscriptsDisabled
 import inspect
 
 from downsub import get_video_id, is_arabic, client
@@ -17,16 +17,24 @@ def get_subtitles(video_id, proxies):
 
             proxy_cfg = ProxyConfig.from_requests_dict(proxies) if proxies else None
             api = YouTubeTranscriptApi(proxy_config=proxy_cfg)
-            return api.fetch(video_id)
-    except Exception:
+            try:
+                return api.fetch(video_id)
+            except (NoTranscriptFound, TranscriptsDisabled):
+                raise
+            except Exception:
+                pass
+    except (ValueError, TypeError):
         pass
 
     try:
         sig = inspect.signature(YouTubeTranscriptApi.get_transcript)
-        if 'proxies' in sig.parameters:
-            return YouTubeTranscriptApi.get_transcript(video_id, proxies=proxies)
-        return YouTubeTranscriptApi.get_transcript(video_id)
-    except Exception:
+        try:
+            if 'proxies' in sig.parameters:
+                return YouTubeTranscriptApi.get_transcript(video_id, proxies=proxies)
+            return YouTubeTranscriptApi.get_transcript(video_id)
+        except (NoTranscriptFound, TranscriptsDisabled):
+            raise
+    except (ValueError, TypeError, AttributeError):
         pass
 
     def _call_list(obj):
@@ -42,12 +50,15 @@ def get_subtitles(video_id, proxies):
                     continue
         return None
 
-    transcripts = _call_list(YouTubeTranscriptApi)
+    try:
+        transcripts = _call_list(YouTubeTranscriptApi)
+        if transcripts is None:
+            api = YouTubeTranscriptApi()
+            transcripts = _call_list(api)
+    except (NoTranscriptFound, TranscriptsDisabled):
+        raise
     if transcripts is None:
-        api = YouTubeTranscriptApi()
-        transcripts = _call_list(api)
-    if transcripts is None:
-        raise RuntimeError('Could not list transcripts for video ' + video_id)
+        raise NoTranscriptFound(video_id, [], None)
 
     if hasattr(transcripts, 'find_manually_created_transcript'):
         manual_list = getattr(transcripts, 'manually_created_transcripts',
