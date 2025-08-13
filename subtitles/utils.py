@@ -1,6 +1,6 @@
 import os
 import sys
-from youtube_transcript_api import YouTubeTranscriptApi, NoTranscriptFound, TranscriptsDisabled
+from youtube_transcript_api import YouTubeTranscriptApi, NoTranscriptFound
 import inspect
 
 from downsub import get_video_id, is_arabic, client
@@ -10,6 +10,7 @@ def get_subtitles(video_id, proxies):
     Fetch subtitles for the given video ID using the provided proxy settings.
     Adapts to multiple youtube-transcript-api versions.
     """
+    # Try ProxyConfig-based API (youtube-transcript-api >=1.2.0)
     try:
         sig = inspect.signature(YouTubeTranscriptApi.__init__)
         if 'proxy_config' in sig.parameters:
@@ -17,26 +18,20 @@ def get_subtitles(video_id, proxies):
 
             proxy_cfg = ProxyConfig.from_requests_dict(proxies) if proxies else None
             api = YouTubeTranscriptApi(proxy_config=proxy_cfg)
-            try:
-                return api.fetch(video_id)
-            except (NoTranscriptFound, TranscriptsDisabled):
-                raise
-            except Exception:
-                pass
-    except (ValueError, TypeError):
+            return api.fetch(video_id)
+    except Exception:
         pass
 
+    # Try static get_transcript (older versions)
     try:
         sig = inspect.signature(YouTubeTranscriptApi.get_transcript)
-        try:
-            if 'proxies' in sig.parameters:
-                return YouTubeTranscriptApi.get_transcript(video_id, proxies=proxies)
-            return YouTubeTranscriptApi.get_transcript(video_id)
-        except (NoTranscriptFound, TranscriptsDisabled):
-            raise
-    except (ValueError, TypeError, AttributeError):
+        if 'proxies' in sig.parameters:
+            return YouTubeTranscriptApi.get_transcript(video_id, proxies=proxies)
+        return YouTubeTranscriptApi.get_transcript(video_id)
+    except Exception:
         pass
 
+    # helper to call list/list_transcripts on obj
     def _call_list(obj):
         for method_name in ('list_transcripts', 'list'):
             if hasattr(obj, method_name):
@@ -50,16 +45,16 @@ def get_subtitles(video_id, proxies):
                     continue
         return None
 
-    try:
-        transcripts = _call_list(YouTubeTranscriptApi)
-        if transcripts is None:
-            api = YouTubeTranscriptApi()
-            transcripts = _call_list(api)
-    except (NoTranscriptFound, TranscriptsDisabled):
-        raise
+    # try static list methods
+    transcripts = _call_list(YouTubeTranscriptApi)
+    # fallback to instance-based API
     if transcripts is None:
-        raise NoTranscriptFound(video_id, [], None)
+        api = YouTubeTranscriptApi()
+        transcripts = _call_list(api)
+    if transcripts is None:
+        raise RuntimeError('Could not list transcripts for video ' + video_id)
 
+    # if TranscriptList: pick manual then generated (robust to missing attrs/types)
     if hasattr(transcripts, 'find_manually_created_transcript'):
         manual_list = getattr(transcripts, 'manually_created_transcripts',
                               getattr(transcripts, '_manually_created_transcripts', []))
@@ -82,6 +77,7 @@ def get_subtitles(video_id, proxies):
             tr = transcripts.find_generated_transcript(codes)
         return tr.fetch()
 
+    # otherwise transcripts is an iterable of Transcript objects
     return next(iter(transcripts)).fetch()
 
 def translate_and_rewrite_with_gpt(text, max_chunk_size=2000, model="gpt-4o-mini"):
