@@ -474,6 +474,11 @@
 
     <div class="input-area">
         <div class="container mx-auto">
+            {% if error %}
+            <div class="bg-red-100 text-red-800 p-4 mb-4 rounded">
+                {{ error }}
+            </div>
+            {% endif %}
             {% if not original and not translated_and_rewritten %}
             <form method="post" class="url-form">
                 {% csrf_token %}

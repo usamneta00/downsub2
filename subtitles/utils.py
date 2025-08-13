@@ -1,8 +1,77 @@
 import os
 import sys
 from youtube_transcript_api import YouTubeTranscriptApi, NoTranscriptFound
+import inspect
 
 from downsub import get_video_id, is_arabic, client
+
+def get_subtitles(video_id, proxies):
+    """
+    Fetch subtitles for the given video ID using the provided proxy settings.
+    Adapts to multiple youtube-transcript-api versions.
+    """
+    try:
+        sig = inspect.signature(YouTubeTranscriptApi.__init__)
+        if 'proxy_config' in sig.parameters:
+            from youtube_transcript_api.proxies import ProxyConfig
+
+            proxy_cfg = ProxyConfig.from_requests_dict(proxies) if proxies else None
+            api = YouTubeTranscriptApi(proxy_config=proxy_cfg)
+            return api.fetch(video_id)
+    except Exception:
+        pass
+
+    try:
+        sig = inspect.signature(YouTubeTranscriptApi.get_transcript)
+        if 'proxies' in sig.parameters:
+            return YouTubeTranscriptApi.get_transcript(video_id, proxies=proxies)
+        return YouTubeTranscriptApi.get_transcript(video_id)
+    except Exception:
+        pass
+
+    def _call_list(obj):
+        for method_name in ('list_transcripts', 'list'):
+            if hasattr(obj, method_name):
+                meth = getattr(obj, method_name)
+                try:
+                    sig = inspect.signature(meth)
+                    if 'proxies' in sig.parameters:
+                        return meth(video_id, proxies=proxies)
+                    return meth(video_id)
+                except Exception:
+                    continue
+        return None
+
+    transcripts = _call_list(YouTubeTranscriptApi)
+    if transcripts is None:
+        api = YouTubeTranscriptApi()
+        transcripts = _call_list(api)
+    if transcripts is None:
+        raise RuntimeError('Could not list transcripts for video ' + video_id)
+
+    if hasattr(transcripts, 'find_manually_created_transcript'):
+        manual_list = getattr(transcripts, 'manually_created_transcripts',
+                              getattr(transcripts, '_manually_created_transcripts', []))
+        codes = [t if isinstance(t, str) else getattr(t, 'language_code', None)
+                 for t in manual_list]
+        codes = [c for c in codes if c]
+        if codes:
+            try:
+                tr = transcripts.find_manually_created_transcript(codes)
+            except Exception:
+                tr = None
+        else:
+            tr = None
+        if tr is None:
+            gen_list = getattr(transcripts, 'generated_transcripts',
+                               getattr(transcripts, '_generated_transcripts', []))
+            codes = [t if isinstance(t, str) else getattr(t, 'language_code', None)
+                     for t in gen_list]
+            codes = [c for c in codes if c]
+            tr = transcripts.find_generated_transcript(codes)
+        return tr.fetch()
+
+    return next(iter(transcripts)).fetch()
 
 def translate_and_rewrite_with_gpt(text, max_chunk_size=2000, model="gpt-4o-mini"):
     # يقوم بالترجمة وإعادة الصياغة معاً في نفس الاستدعاء
@@ -94,14 +163,13 @@ def rewrite_arabic_with_gpt(text, max_chunk_size=2000, model="gpt-4o-mini"):
         rewritten_chunks.append(response.output_text.strip())
     return "\n".join(rewritten_chunks)
 
-def fetch_transcripts(video_url):
+def fetch_transcripts(video_url, proxy_url=None):
     """
     Returns (original_single_line, translated_and_rewritten_single_line_or_None).
     """
     video_id = get_video_id(video_url)
-    transcripts = YouTubeTranscriptApi().list(video_id)
-    transcript = next(iter(transcripts))
-    fetched = transcript.fetch()
+    proxies = {"http": proxy_url, "https": proxy_url} if proxy_url else {}
+    fetched = get_subtitles(video_id, proxies)
     raw = "\n".join(sn.text for sn in fetched)
     original = " ".join(raw.splitlines())
 
